@@ -1,0 +1,95 @@
+{
+  "coverage": {
+    "159665": {
+      "first_observation": "2023-01-06",
+      "rows": 919,
+      "note": "上市后可得历史；MA200预热不足时不交易；总资金的卫星上限，不与100%宽基直接排名"
+    },
+    "159992": {
+      "first_observation": "2020-04-10",
+      "rows": 1586,
+      "note": "上市后可得历史；MA200预热不足时不交易；总资金的卫星上限，不与100%宽基直接排名"
+    },
+    "510300": {
+      "requested_start": "2015-01-01",
+      "start": "2015-01-05",
+      "end": "2026-10-27",
+      "rows": 2869,
+      "warmup_rows": 633,
+      "sha256": "768ebde392357757389a81850543f28ac933567c2e34f812f4f8d5a23b90599e"
+    }
+  },
+  "config": {
+    "windows": {
+      "short": 20,
+      "medium": 60,
+      "long": 200,
+      "volume": 20,
+      "pullback": 10
+    },
+    "thresholds": {
+      "low_valuation": 0.3,
+      "high_valuation": 0.7,
+      "broad_strong": 0.6,
+      "broad_weak": 0.4,
+      "volume_confirm": 1.1,
+      "shares_inflow": 0.01,
+      "allocation_band": 0.05,
+      "buy_step": 0.05,
+      "small_buy_step": 0.02,
+      "trade_tolerance": 0.001
+    },
+    "A": {
+      "target_weight": 0.6,
+      "min_weight": 0.4,
+      "max_weight": 0.7,
+      "risk_weight": 0.4
+    },
+    "B": {
+      "target_weight": 0.6,
+      "min_weight": 0.2,
+      "max_weight": 0.8,
+      "risk_weight": 0.2
+    },
+    "C": {
+      "target_weight": 0.6,
+      "min_weight": 0.2,
+      "max_weight": 0.8,
+      "risk_weight": 0.2
+    },
+    "D": {
+      "target_weight": 0.1,
+      "min_weight": 0.02,
+      "max_weight": 0.1,
+      "risk_weight": 0.02
+    },
+    "evaluation": {
+      "drawdown_improvement": 0.05,
+      "annual_consistency": 0.6,
+      "annual_return_slack": 0.02,
+      "max_underwater_ratio": 1.0,
+      "max_annual_dispersion_ratio": 1.0
+    },
+    "execution": {
+      "minimum_volume": 0
+    }
+  },
+  "assumptions": {
+    "initial_capital": 100000.0,
+    "fee_rate": 0.0003,
+    "dca_months": 12,
+    "cash_yield": 0,
+    "execution": "T日收盘信号，T+1开盘执行",
+    "dividends": "未复权价格，不含分红"
+  },
+  "limitations": [
+    "2015至2017日历不在本地已验证日历覆盖内；数据首尾不等于逐交易日完整性验证。",
+    "所有收益均为价格研究，未还原分红；沪深300指数价格不是可以直接成交的证券。",
+    "月度分批投入使用相同初始资金预留现金、分12个月投入，不是新增工资现金流IRR。",
+    "零成交量被视为整日暂停/无开盘成交的可成交性标记；不开仓、不卖出，不用T+1正成交量大小择时。该假设需真实停牌/开盘成交记录进一步验证；未计滑点、市场冲击、最低佣金、整数份额、税制或实盘成交限制。",
+    "D按配置目标卫星仓与同权重静态仓比较，较低整体回撤不能归因于择时能力。",
+    "年度和70/30分段从现金重新开始，不代表真实账户跨期持仓；首尾年度可能不完整。",
+    "历史表现不保证未来收益或最大回撤，历史低于20%也不构成未来20%内的承诺。"
+  ],
+  "conclusion": "同资产比较，B相对简单初始仓位持有最大回撤改善7.58个百分点；可比年度中回撤较小比例75.0%。B/简单基准最长水下期为2765/1379个交易日，年度收益离散度为6.45%/11.85%，年化为0.60%/0.70%。未同时达到配置中的5个百分点回撤改善、60%年度一致性、水下持续期不超过基准1倍、年度收益离散度不超过基准1倍及年化落后不超过2个百分点标准，建议保留简单策略。A/C历史覆盖不足，不能判定其优于B或简单配置；D应单独按同卫星额度评价。"
+}
