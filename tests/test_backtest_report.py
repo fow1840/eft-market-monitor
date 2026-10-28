@@ -38,8 +38,12 @@ def test_report_is_actual_data_with_risk_explicitly_unavailable():
 def test_explicit_calendar_checks_gaps_instead_of_filling():
     frame = cached()
     calendar = frame[['date']].copy()
-    report = build_report(frame, calendar=calendar)
+    report = build_report(frame, calendar=calendar, calendar_source='Published test calendar')
     assert report['calendar_validation']['status'] == '通过'
+    assert report['calendar_validation']['expected_session_count'] == len(frame)
+    assert report['calendar_validation']['source'] == 'Published test calendar'
+    assert not any('未提供交易日历' in value for value in report['limitations'])
+    assert 'Published test calendar' in render_markdown(report)
     with pytest.raises(ValueError):
         build_report(frame.drop(index=3), calendar=calendar)
 

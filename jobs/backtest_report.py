@@ -30,7 +30,7 @@ def read_cached_prices(db_path: Path, symbol='510300') -> pd.DataFrame:
 
 
 def build_report(cached: pd.DataFrame, *, start='2018-01-01', end=None,
-                 calendar: pd.DataFrame | None = None) -> dict:
+                 calendar: pd.DataFrame | None = None, calendar_source: str | None = None) -> dict:
     data = cached.copy()
     data['date'] = pd.to_datetime(data['date'], errors='raise')
     # Today's cached bar may be intraday: exclude it even if caller requests it.
@@ -55,11 +55,16 @@ def build_report(cached: pd.DataFrame, *, start='2018-01-01', end=None,
         calendar_validation = {'status': '通过' if not len(missing) and not len(unexpected) else '不通过',
                                'missing_exchange_sessions': missing.strftime('%Y-%m-%d').tolist(),
                                'unexpected_sessions': unexpected.strftime('%Y-%m-%d').tolist(),
-                               'note': '根据调用方提供的交易日历比较；日历来源真实性需另行核验。'}
+                               'expected_session_count': len(expected),
+                               'source': calendar_source or '调用方提供，来源未独立核验',
+                               'note': '已逐日比较报价日期与提供的交易日历；交易日历本身来源另行列示，不推定为交易所直连。'}
         if len(missing) or len(unexpected):
             raise ValueError('Cached quotes do not match provided trading calendar')
     baseline = compare_strategies(prices, fee_rate=.0003, dca_months=12)
     study = validation_study(prices)
+    limitations = study['limitations'].copy()
+    if calendar is not None:
+        limitations[0] = '已与提供的交易日历逐日核对；报告不自动补齐、插值或前向填充缺失行情。'
     digest = hashlib.sha256(prices.to_csv(index=False, float_format='%.10g').encode()).hexdigest()
     return {'symbol': '510300', 'requested_start': start, 'start': str(dates.min().date()),
             'end': str(dates.max().date()), 'rows': len(prices),
@@ -75,7 +80,7 @@ def build_report(cached: pd.DataFrame, *, start='2018-01-01', end=None,
             'conclusion': study['conclusion'],
             'risk_strategy': '不可用：没有真实、可验证的历史五维时点信号，未用趋势替代五维。',
             'assumptions': baseline['hold'].assumptions,
-            'limitations': study['limitations'] + [
+            'limitations': limitations + [
                 '510300为ETF价格代理，并非沪深300指数本身；未复权价格未加回分红，不能称为总收益。',
                 '初始资金100000；月定投以同等初始预算分12个月投入，剩余现金零收益，不是外部月度新增资金的IRR。',
                 '基准手续费单边0.03%；未计滑点、最低佣金、整数份额限制及其他个别账户费用。',
@@ -121,6 +126,7 @@ def render_markdown(report: dict) -> str:
               f"- 日期唯一递增、价格正且有限，无空值；当前上海日期的未完成K线已排除。",
               f"- 最大单日收盘绝对变化：{_percent(report['validation']['max_absolute_close_return'])}。",
               f"- 交易日历验证：{report['calendar_validation']['status']}。{report['calendar_validation'].get('note', '')}",
+              f"- 日历来源：{report['calendar_validation'].get('source', '未提供')}。",
               f"- 价格内容 SHA256：`{report['price_sha256']}`。", '', '## 假设与已知限制', '']
     lines.extend('- ' + value for value in report['limitations'])
     lines += ['', '执行时点：T日收盘信号最早T+1开盘执行；本次没有历史五维信号，因此只运行不依赖信号的两种基准。', '',
@@ -134,10 +140,12 @@ def main():
     parser.add_argument('--output', type=Path, default=Path('docs'))
     parser.add_argument('--start', default='2018-01-01')
     parser.add_argument('--end')
+    parser.add_argument('--calendar-source', help='Provenance description for supplied calendar')
     parser.add_argument('--calendar', type=Path, help='Optional exchange-calendar CSV with date column')
     args = parser.parse_args()
     report = build_report(read_cached_prices(args.db), start=args.start, end=args.end,
-                          calendar=pd.read_csv(args.calendar) if args.calendar else None)
+                          calendar=pd.read_csv(args.calendar) if args.calendar else None,
+                          calendar_source=args.calendar_source)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / 'BACKTEST_REPORT.md').write_text(render_markdown(report), encoding='utf-8')
     def serialize(value):
