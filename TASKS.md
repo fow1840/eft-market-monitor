@@ -4,7 +4,7 @@
 | ID | 任务与验收 | 状态 |
 |---|---|---|
 | T00 | AGENTS、PLANS、TASKS、DECISIONS、gitignore、环境模板齐全，规则清晰 | 完成 |
-| T01 | 首页、SQLite、日志、配置；Streamlit 启动、pytest 正常 | 待执行 |
+| T01 | 首页、SQLite、日志、配置；Streamlit 启动、pytest 正常 | 完成：4 tests passed，HTTP health OK |
 | T02 | 七类 ETF OHLCV/成交额，250日、去重重试校验缓存、SQLite和查询页面 | 待执行 |
 | T03 | MA5/20/60、20/60收益、60日高点回撤、量比；趋势量能分类，手算验证 | 待执行 |
 | T04 | 份额及1/5/20日变化、异常跳变、流入稳定流出；日期单位校验及降级 | 待执行 |
