@@ -23,10 +23,11 @@ def _history(frame, columns):
     return out.sort_values('date').reset_index(drop=True)
 
 
-def analyze_shares(frame, source='unknown', unit='份', jump_threshold=0.30):
+def analyze_shares(frame, source='unknown', unit='份', jump_threshold=0.30, trading_calendar=None):
     """Changes are observation intervals, not calendar days. Missing gaps are flagged."""
     result = dict(available=False, source=source, unit='份', date=None, shares=None,
-                  change1=None, change5=None, change20=None, state=None, reasons=[])
+                  change1=None, change5=None, change20=None, state=None, reasons=[],
+                  change_basis='observations' if trading_calendar is None else 'verified trading sessions')
     if frame.empty:
         result['reasons'] = ['份额数据不可用']
         return result
@@ -40,14 +41,27 @@ def analyze_shares(frame, source='unknown', unit='份', jump_threshold=0.30):
     result.update(date=data.date.iloc[-1].date().isoformat(), shares=float(data.shares.iloc[-1]))
     # Known missing weekdays are conservative: exchange holiday calendar is not inferred.
     gaps = data.date.diff().dt.days.fillna(1)
-    if (gaps > 4).any():
+    if trading_calendar is None and (gaps > 4).any():
         result['reasons'].append('观察间隔不完整，变化率按可用观察值计算，不能视为连续交易日')
     jumps = data.shares.pct_change().abs() > jump_threshold
     if jumps.any():
         result['reasons'].append('份额异常跳变，需核对拆分/合并或数据单位；暂停流向信号')
         return result
+    calendar = None
+    if trading_calendar is not None:
+        calendar = pd.DatetimeIndex(pd.to_datetime(trading_calendar)).normalize().unique().sort_values()
+        if not data.date.isin(calendar).all():
+            raise ValueError('share date outside verified trading calendar')
+        if len(calendar) == 0 or calendar[-1] < data.date.iloc[-1]:
+            raise ValueError('trading calendar coverage insufficient')
     for n in (1, 5, 20):
         if len(data) > n:
+            tail = data.date.iloc[-n-1:]
+            if calendar is not None:
+                expected = calendar[(calendar >= tail.iloc[0]) & (calendar <= tail.iloc[-1])]
+                if len(expected) != n+1 or not pd.DatetimeIndex(tail).equals(expected):
+                    result['reasons'].append(f'{n}日份额观察缺失，暂停该期限变化率')
+                    continue
             result[f'change{n}'] = float(data.shares.iloc[-1] / data.shares.iloc[-n-1] - 1)
     change = result['change5']
     result.update(available=True, state=None if change is None else '流入' if change > .01 else '流出' if change < -.01 else '稳定')
@@ -243,3 +257,42 @@ def fetch_breadth(timeout=10, max_pages=80):
     if len(dates) != 1: raise ValueError('mixed/missing quote dates')
     frame = pd.DataFrame(rows).rename(columns={'f12':'code','f14':'name','f2':'close','f18':'previous_close','f6':'amount'})
     return analyze_breadth(frame, dates.pop(), 'Eastmoney full A realtime snapshot',total)
+
+
+def fetch_trading_calendar(timeout=12):
+    """Sina published SH exchange calendar, decoded using AKShare's documented decoder."""
+    from akshare.calendar.calendar_trade_date_hist import hk_js_decode
+    from py_mini_racer import MiniRacer
+    response = requests.get('https://finance.sina.com.cn/realstock/company/klc_td_sh.txt', timeout=timeout)
+    response.raise_for_status()
+    encoded = response.text.split('=')[1].split(';')[0].replace('"','')
+    decoder = MiniRacer()
+    decoder.eval(hk_js_decode)
+    dates = pd.DatetimeIndex(pd.to_datetime(decoder.call('d',encoded),utc=True)).tz_localize(None).normalize()
+    dates = dates.union(pd.DatetimeIndex(['1992-05-04'])).sort_values()
+    if not len(dates): raise ValueError('empty trading calendar')
+    return dates
+
+
+def fetch_shares_history(symbol, as_of, sessions=21, timeout=10, trading_calendar=None):
+    """Fetch exact official sessions. Failed days remain absent and never forward-filled."""
+    from concurrent.futures import ThreadPoolExecutor
+    if not 1 <= sessions <= 60: raise ValueError('sessions outside bounded range1..60')
+    calendar = fetch_trading_calendar(timeout) if trading_calendar is None else pd.DatetimeIndex(trading_calendar)
+    day = pd.Timestamp(as_of).normalize()
+    if day > pd.Timestamp(date.today()): raise ValueError('future shares request')
+    if not len(calendar) or calendar.max() < day: raise ValueError('calendar does not cover request date')
+    dates = calendar[calendar <= day][-sessions:]
+    if len(dates) < sessions: raise ValueError('insufficient calendar coverage')
+    failures = []
+    def fetch(day):
+        try: return fetch_shares(symbol,day,timeout)
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            failures.append(day.isoformat())
+            return pd.DataFrame(columns=['date','shares','source'])
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        frames = list(pool.map(fetch,dates))
+    frame = pd.concat(frames,ignore_index=True)
+    frame.attrs['trading_calendar'] = calendar
+    frame.attrs['failed_dates'] = failures
+    return frame

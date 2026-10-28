@@ -106,3 +106,17 @@ def test_nonfinite_and_future_data_rejected():
     with pytest.raises(ValueError): analyze_shares(data)
     data = breadth_sample()
     with pytest.raises(ValueError): analyze_breadth(data,'2099-01-01')
+
+
+def test_shares_calendar_exact_continuity_and_missing_day():
+    calendar = pd.bdate_range('2025-01-01',periods=23)
+    frame = pd.DataFrame({'date':calendar[:21], 'shares':range(100,121)})
+    result = analyze_shares(frame,trading_calendar=calendar)
+    assert result['change20'] == pytest.approx(.2)
+    assert result['change_basis'] == 'verified trading sessions'
+    broken = frame.drop(index=19)
+    result = analyze_shares(broken,trading_calendar=calendar)
+    assert result['change1'] is None
+    assert result['change5'] is None
+    assert result['state'] is None
+    with pytest.raises(ValueError): analyze_shares(frame,trading_calendar=calendar[1:])
