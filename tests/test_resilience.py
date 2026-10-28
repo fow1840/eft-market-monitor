@@ -145,6 +145,8 @@ def test_job_snapshot_sanitizes_nan_and_date_payload(tmp_path, monkeypatch):
     monkeypatch.setattr(job, 'ETF_UNIVERSE', {'510300':'test'})
     monkeypatch.setattr(job, 'update_quotes', lambda *a, **k: {'data':pd.DataFrame(), 'error':'offline', 'source':None})
     def val(*a, **k): return pd.DataFrame({'date':['2025-01-02'], 'pe':[10]})
+    monkeypatch.setattr('src.index_data.update_index', lambda *a, **k: {'rows': 0})
+    monkeypatch.setattr('src.valuation_fallback.fetch_valuation_fallback', lambda *a, **k: {'available':False,'state':None})
     monkeypatch.setattr(fundamentals,'fetch_valuation',val)
     monkeypatch.setattr(fundamentals,'analyze_valuation',lambda *a, **k: {'date':'2025-01-02','available':False,'state':None})
     monkeypatch.setattr(fundamentals,'fetch_breadth',lambda: {'date':'2025-01-02','available':False,'state':None})

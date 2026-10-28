@@ -40,6 +40,19 @@ def build_dashboard(path, symbol='510300', *, now=None):
     if stale:
         trend['state'] = volume['state'] = '数据不足'
         warnings.append('行情缺失或超过4个日历日未更新；节假日不补造行情，不产生方向判断')
+    try:
+        from src.calendar import load_calendar, latest_completed_session
+        calendar = load_calendar()
+        expected = latest_completed_session(now, calendar)
+        if expected is not None and not quotes.empty:
+            recent = calendar[calendar.date <= expected][-60:]
+            observed = set(pd.to_datetime(quotes.date).dt.normalize())
+            if quotes.date.iloc[-1].date() < expected or any(day not in observed for day in recent):
+                trend['state'] = volume['state'] = '数据不足'
+                warnings.append('行情未覆盖最新已收盘交易日或最近60个交易日存在缺失')
+    except (OSError, ValueError, KeyError):
+        expected = None
+        warnings.append('本地交易日历不可用，无法确认最新交易日')
     observations = {}
     for kind, key, max_age in [('shares', symbol, 4), ('valuation', '沪深300', 45), ('breadth', 'market', 4)]:
         try:
@@ -48,7 +61,8 @@ def build_dashboard(path, symbol='510300', *, now=None):
             allowed_day = cutoff
             invalid = (not item.get('available', False) or observed_day is None
                        or observed_day > allowed_day or (today - observed_day).days > max_age
-                       or item.get('state') not in LABELS[kind])
+                       or item.get('state') not in LABELS[kind]
+                       or (kind == 'breadth' and expected is not None and observed_day != expected))
             if invalid:
                 item = {**item, 'state': None, 'available': False}
                 warnings.append(f'{kind} 数据不可用、未收盘或过期')
