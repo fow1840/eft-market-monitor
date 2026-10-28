@@ -67,3 +67,44 @@ def test_cost_effect_and_drawdown_from_initial_cash():
 
 def test_risk_requires_history():
     with pytest.raises(ValueError): run_backtest(prices(), 'risk')
+
+
+def test_chronological_validation_costs_and_parameters():
+    from src.backtest import validation_study
+    p = prices(80)
+    report = validation_study(p, fee_rates=(0, .001), dca_months=(6, 12))
+    table = report['results']
+    inside = table[table.partition == 'in_sample']
+    outside = table[table.partition == 'out_of_sample']
+    assert inside.end.max() < outside.start.min()
+    assert set(table.dca_months) == {6, 12}
+    assert set(table.fee_rate) == {0, .001}
+    assert 'risk' not in set(table.strategy)
+    assert table.loc[table.fee_rate == .001, 'total_return'].lt(0).all()
+
+
+def test_extreme_crash_preserves_cash_and_nonnegative_equity():
+    p = prices(6)
+    p.loc[3:, ['open', 'close']] = .01
+    signal = pd.Series([1, 0, 0, 0, 0, 0], index=pd.DatetimeIndex(p.date))
+    result = run_backtest(p, 'risk', signals=signal, fee_rate=0)
+    assert result.daily.iloc[-1].equity == 100000
+    assert (result.daily.cash >= 0).all()
+    assert (result.daily.units >= 0).all()
+    assert run_backtest(p, fee_rate=0).metrics['max_drawdown'] == pytest.approx(-.999)
+
+
+def test_prefix_invariance_prevents_future_price_leak():
+    p = prices(80)
+    p['close'] = np.linspace(10, 20, 80)
+    s = pd.Series((p.close > p.close.rolling(5).mean()).astype(float).values,
+                  index=pd.DatetimeIndex(p.date))
+    whole = run_backtest(p, 'risk', signals=s)
+    prefix = run_backtest(p.iloc[:40], 'risk', signals=s.iloc[:40])
+    pd.testing.assert_frame_equal(whole.daily.iloc[:40], prefix.daily)
+
+
+def test_missing_prices_not_silently_interpolated():
+    p = prices(); p.loc[3, 'open'] = np.nan
+    with pytest.raises(ValueError):
+        run_backtest(p)

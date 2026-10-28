@@ -124,3 +124,39 @@ def compare_strategies(prices, signals=None, **kwargs):
     if signals is not None:
         results['risk'] = run_backtest(prices, 'risk', signals=signals, **kwargs)
     return results
+
+
+def validation_study(prices: pd.DataFrame, signals: pd.Series | None = None,
+                     split_fraction: float = .7, fee_rates=(0., .0003, .001),
+                     dca_months=(6, 12, 24)) -> dict:
+    """Chronological holdout and parameter/cost study; never fits to holdout.
+
+    This diagnostic does not prove strategy effectiveness or select parameters.
+    Annual slices are observations, not labels inferred from future outcomes.
+    Risk comparison is unavailable unless real point-in-time exposures are given.
+    """
+    frame = validate_prices(prices)
+    if not 0 < split_fraction < 1:
+        raise ValueError('Split fraction must be between zero and one')
+    cut = int(len(frame) * split_fraction)
+    if cut < 2 or len(frame) - cut < 2:
+        raise ValueError('Each chronological partition needs at least two sessions')
+    partitions = {'in_sample': frame.iloc[:cut], 'out_of_sample': frame.iloc[cut:]}
+    for year, part in frame.groupby(frame.date.dt.year):
+        if len(part) >= 2:
+            partitions[f'year_{year}'] = part
+    rows = []
+    for label, part in partitions.items():
+        part_signals = signals.reindex(pd.DatetimeIndex(part.date)).dropna() if signals is not None else None
+        for cost in fee_rates:
+            for months in dca_months:
+                results = compare_strategies(part, signals=part_signals, fee_rate=cost, dca_months=months)
+                for strategy, result in results.items():
+                    rows.append({'partition': label, 'start': part.date.iloc[0],
+                                 'end': part.date.iloc[-1], 'fee_rate': cost,
+                                 'dca_months': months, 'strategy': strategy, **result.metrics})
+    return {'results': pd.DataFrame(rows),
+            'conclusion': '保留简单策略为基准；未完成真实五维历史、样本外与风险收益验证前，不认定复杂策略有效。',
+            'limitations': ['未提供交易日历，无法自动判定停牌与缺失交易日；不插值补价。',
+                            '历史上市样本与复权/分红须由数据源单独核验。',
+                            '样本外仅用于诊断，不自动调参；各分段从现金重新开始。']}
