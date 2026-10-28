@@ -217,9 +217,9 @@ def run_strategy_backtest(data,strategy,config=None,*,initial_capital=100000,fee
         equity_open=cash+units*row['open'];fee=0.;trades=0
         signal_day=pending_day
         execution_status='no_order' if pending is None else 'within_tolerance'
-        if pending is not None and row['volume']<=config['execution']['minimum_volume']:
+        if pending is not None and row['volume']==0:
             execution_status='cancelled_untradable_open'
-        if pending is not None and row['volume']>config['execution']['minimum_volume']:
+        if pending is not None and row['volume']>0:
             weight=units*row['open']/equity_open
             if abs(weight-pending)>config['thresholds']['trade_tolerance']:
                 target=pending*equity_open;difference=target-units*row['open']
@@ -244,4 +244,4 @@ def run_strategy_backtest(data,strategy,config=None,*,initial_capital=100000,fee
     metrics['max_consecutive_loss_sessions']=int(losing.groupby(groups).sum().max())
     underwater=daily.equity<pd.concat([pd.Series([initial_capital]),daily.equity],ignore_index=True).cummax().iloc[1:].to_numpy()
     metrics['max_underwater_sessions']=int(underwater.groupby((~underwater).cumsum()).sum().max())
-    return StrategyBacktestResult(daily,metrics,pd.DataFrame(decisions),'T close decision at T+1 open; equal initial capital; residual cash zero yield; no dividends/slippage; fractional shares; unavailable inputs never fabricated')
+    return StrategyBacktestResult(daily,metrics,pd.DataFrame(decisions),'T close decision at T+1 open; positive volume thresholds use T close only, never T+1 total volume; zero-volume bar treated as no opening print and cannot execute; equal initial capital; residual cash zero yield; no dividends/slippage; fractional shares; unavailable inputs never fabricated')

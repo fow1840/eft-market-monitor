@@ -200,3 +200,16 @@ def test_d_midterm_risk_does_not_wait_for_longterm_warmup():
 def test_stability_ratio_parameters_validated():
     c=load_config();c['evaluation']['max_underwater_ratio']=0
     with pytest.raises(ValueError):evaluate('B',row(),.3,c)
+
+
+def test_next_positive_volume_does_not_select_open_execution():
+    d=data();config=load_config();config['execution']['minimum_volume']=500
+    first=run_strategy_backtest(d,'B',config,fee_rate=0).daily.query('trades > 0').index[0]
+    low=d.copy();high=d.copy()
+    low.loc[first,'volume']=100 # below configured close-time threshold but actual positive opening exists
+    high.loc[first,'volume']=10000
+    low_result=run_strategy_backtest(low,'B',config,fee_rate=0)
+    high_result=run_strategy_backtest(high,'B',config,fee_rate=0)
+    assert low_result.daily.units.iloc[first]==high_result.daily.units.iloc[first]
+    assert low_result.daily.trades.iloc[first]==high_result.daily.trades.iloc[first]==1
+    assert low_result.decisions.action.iloc[first]=='暂停新增'
