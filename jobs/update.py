@@ -101,6 +101,8 @@ def run_update(job, force=False):
             record(symbol,shares)
     dashboard=build_dashboard(settings.db_path)
     snapshot={k:v for k,v in dashboard.items() if k!='quotes'}
+    snapshot['created_at']=now.isoformat()
+    snapshot['update_job']=job
     snapshot['quotes']=dashboard['quotes'].tail(1).assign(date=lambda x:x.date.astype(str)).to_dict('records')
     snapshot['portfolio']=load_portfolio(settings.db_path)
     from src.portfolio import analyze_portfolio,risk_advice

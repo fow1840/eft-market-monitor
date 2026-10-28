@@ -11,3 +11,5 @@ logs/
 scratch/
 shared/
 library-files/
+.coverage
+htmlcov/
