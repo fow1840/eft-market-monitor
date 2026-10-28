@@ -13,3 +13,8 @@ shared/
 library-files/
 .coverage
 htmlcov/
+# Private portfolio uploads are never versioned.
+uploads/
+private/
+*.xlsx
+*.xls

@@ -85,3 +85,7 @@ python -m jobs.strategy_report
 A长期价值配置、B纯趋势、C价值＋趋势、D卫星波段均输出原因。A/C历史回测要求逐日可审计的PE/PB分位及发布时间，C还需要市场宽度及发布时间；不将当前估值回填过去。可以通过 `jobs.strategy_report.build_comparison` 向行情DataFrame提供 `pe_percentile`、`pb_percentile`、`valuation_available_at`、`breadth_ratio`、`breadth_available_at`，可选 `shares_change5`/`shares_available_at`。发布时间按上海时区判断，不晚于信号日收盘决策截止时间。
 
 当前数据库缺少完整历史时点因子，因此A/C会显示“历史数据不足”，而不是生成虚构收益。B与简单宽基/现金比较，D与同卫星额度比较；不能以较低风险额度的回撤直接证明择时有效。
+
+## Excel持仓再平衡
+
+侧栏打开“持仓再平衡”，上传当前基金总账 `.xlsx`，无需把文件放入Git。支持“当前持仓＋目标组合”，目标比例优先读取可编辑列。默认偏离超过±5个百分点触发，分批取目标差额的25%。页面区分最终差额、理论本轮计划、已确认资金支持的金额及模拟仓位；赎回限制缺失必须人工确认，不自动下单。操作后更新原表再上传。字段、资金与分摊规则见 [docs/REBALANCE.md](docs/REBALANCE.md)。
