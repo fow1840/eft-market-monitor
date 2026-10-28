@@ -1,0 +1,8 @@
+{
+  "windows": {"short":20,"medium":60,"long":200,"volume":20,"pullback":10},
+  "thresholds": {"low_valuation":0.30,"high_valuation":0.70,"broad_strong":0.60,"broad_weak":0.40,"volume_confirm":1.10,"shares_inflow":0.01,"allocation_band":0.05,"buy_step":0.05,"small_buy_step":0.02,"trade_tolerance":0.001},
+  "A": {"target_weight":0.60,"min_weight":0.40,"max_weight":0.70,"risk_weight":0.40},
+  "B": {"target_weight":0.60,"min_weight":0.20,"max_weight":0.80,"risk_weight":0.20},
+  "C": {"target_weight":0.60,"min_weight":0.20,"max_weight":0.80,"risk_weight":0.20},
+  "D": {"target_weight":0.10,"min_weight":0.02,"max_weight":0.10,"risk_weight":0.02}
+}
