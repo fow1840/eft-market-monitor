@@ -111,3 +111,14 @@ def test_malformed_sheet_xml_is_validation_error():
             if item.filename=='xl/worksheets/sheet1.xml':payload=b'<broken'
             target.writestr(item,payload)
     with pytest.raises(ValueError):parse_holdings_excel(out.getvalue())
+
+
+def test_sparse_columns_outside_limit_are_not_silently_ignored():
+    raw=workbook();out=BytesIO()
+    with ZipFile(BytesIO(raw)) as source,ZipFile(out,'w') as target:
+        for item in source.infolist():
+            payload=source.read(item.filename)
+            if item.filename=='xl/worksheets/sheet1.xml':
+                payload=payload.replace(b'</sheetData>',b'<row r="4"><c r="ZZ4" t="inlineStr"><is><t>hidden</t></is></c></row></sheetData>')
+            target.writestr(item,payload)
+    with pytest.raises(ValueError,match='列数'):parse_holdings_excel(out.getvalue())

@@ -81,6 +81,12 @@ def _input_bytes(source):
                                 try:row_number=int(element.attrib.get('r','0'))
                                 except ValueError as exc:raise ValueError('无效Excel行号') from exc
                                 if row_number>MAX_ROWS:raise ValueError('Excel行数超限')
+                            if event=='start' and element.tag.endswith('}c'):
+                                coordinate=element.attrib.get('r','')
+                                letters=re.match(r'^([A-Za-z]+)[0-9]+$',coordinate)
+                                if coordinate and not letters:raise ValueError('无效Excel单元格坐标')
+                                if letters and openpyxl.utils.column_index_from_string(letters.group(1))>MAX_COLUMNS:
+                                    raise ValueError('Excel列数超限')
                             if event=='end':element.clear()
     except (BadZipFile, ParseError) as exc:raise ValueError('文件不是有效xlsx') from exc
     return payload
