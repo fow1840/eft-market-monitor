@@ -101,3 +101,13 @@ def test_explicit_holding_period_restriction_overrides_redeem_yes():
 def test_explicit_fund_target_fraction():
     payload=workbook(rows=[['A','example',100,'核心宽基','','100%']],extra_headers=['目标仓位'])
     assert parse_holdings_excel(payload)['holdings'][0]['fund_target']==Decimal('1')
+
+
+def test_malformed_sheet_xml_is_validation_error():
+    raw=workbook();out=BytesIO()
+    with ZipFile(BytesIO(raw)) as source,ZipFile(out,'w') as target:
+        for item in source.infolist():
+            payload=source.read(item.filename)
+            if item.filename=='xl/worksheets/sheet1.xml':payload=b'<broken'
+            target.writestr(item,payload)
+    with pytest.raises(ValueError):parse_holdings_excel(out.getvalue())

@@ -6,13 +6,14 @@ fixtures or application logs.
 """
 from __future__ import annotations
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 import re
 import unicodedata
 from zipfile import ZipFile, BadZipFile
-from xml.etree.ElementTree import iterparse
+from xml.etree.ElementTree import iterparse, ParseError
 import openpyxl
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -81,7 +82,7 @@ def _input_bytes(source):
                                 except ValueError as exc:raise ValueError('无效Excel行号') from exc
                                 if row_number>MAX_ROWS:raise ValueError('Excel行数超限')
                             if event=='end':element.clear()
-    except BadZipFile as exc:raise ValueError('文件不是有效xlsx') from exc
+    except (BadZipFile, ParseError) as exc:raise ValueError('文件不是有效xlsx') from exc
     return payload
 
 
@@ -154,7 +155,7 @@ def parse_holdings_excel(source, *, today=None):
     Money and fractions use Decimal. Holding statuses are free/locked/unknown;
     missing restrictions are never inferred from a fund's name or asset bucket.
     """
-    today=today or date.today()
+    today=today or datetime.now(ZoneInfo('Asia/Shanghai')).date()
     payload=_input_bytes(source)
     try:
         book=openpyxl.load_workbook(BytesIO(payload),read_only=True,data_only=False,keep_links=False)
