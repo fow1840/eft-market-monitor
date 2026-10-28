@@ -6,7 +6,7 @@ Unknown/locked redemptions never finance executable purchases. Cash remaining
 from proposed sales is a separate, explicit unallocated cash position.
 """
 from collections import defaultdict
-from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR
+from decimal import Decimal, DecimalException, ROUND_HALF_UP, ROUND_FLOOR
 import unicodedata
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -23,7 +23,10 @@ def number(value, label):
 
 
 def cents(value):
-    return int((number(value, '金额') * 100).quantize(D('1'), rounding=ROUND_HALF_UP))
+    try:
+        return int((number(value, '金额') * 100).quantize(D('1'), rounding=ROUND_HALF_UP))
+    except DecimalException:
+        raise ValueError('金额超出支持的分币计算精度，请检查Excel中的单位或数值') from None
 
 
 def split_cents(total, weights):
@@ -105,13 +108,17 @@ def plan_rebalance(holdings, targets, fraction=.25, threshold=.05, theme_limits=
         amounts=split_cents(target_amount,weights)
         # Round at bucket level, then distribute unsigned fund changes coherently.
         changes=[amount-row['amount_cents'] for row,amount in zip(selected,amounts)]
-        desired=[int((D(abs(change))*fraction).quantize(D('1'),rounding=ROUND_FLOOR))*(1 if change>=0 else -1) if active else 0 for change in changes]
-        for row,amount,change,proposal in zip(selected,amounts,changes,desired):
+        explicit_targets=any(x is not None for x in explicit)
+        fund_triggers=[explicit_targets and abs(D(change)/total)>threshold for change in changes]
+        row_triggers=[active or flag for flag in fund_triggers]
+        desired=[int((D(abs(change))*fraction).quantize(D('1'),rounding=ROUND_FLOOR))*(1 if change>=0 else -1) if triggered else 0 for change,triggered in zip(changes,row_triggers)]
+        for row,amount,change,proposal,row_active in zip(selected,amounts,changes,desired,row_triggers):
             reasons=['桶内目标按现有金额比例分配；不是基金优选'] if not any(x is not None for x in explicit) else ['使用明确的基金目标比例']
             if proposal>0 and any(theme in overthemes for theme in row['themes']):proposal=0;reasons.append('主题超配优先，暂停新增')
-            if not active:reasons.append('资产桶偏离未超过阈值，保持；超配时暂停加仓')
-            row.update(target_cents=amount,final_delta_cents=change,desired_cents=proposal,reasons=reasons,active=active)
-        bucket_rows.append(dict(bucket=bucket,current_amount=_money(current),target_amount=_money(target_amount),current_weight=float(D(current)/total),target_weight=float(target),deviation_pp=float((D(current)/total-target)*100),final_adjustment_amount=_money(delta),triggered=active))
+            if row_active and not active:reasons.append('资产桶整体未超阈值，但明确的基金目标偏离超过阈值，触发基金层再平衡')
+            if not row_active:reasons.append('资产桶和适用基金目标偏离未超过阈值，保持；超配时暂停加仓')
+            row.update(target_cents=amount,final_delta_cents=change,desired_cents=proposal,reasons=reasons,active=row_active,explicit_target=explicit_targets)
+        bucket_rows.append(dict(bucket=bucket,current_amount=_money(current),target_amount=_money(target_amount),current_weight=float(D(current)/total),target_weight=float(target),deviation_pp=float((D(current)/total-target)*100),final_adjustment_amount=_money(delta),triggered=active or any(fund_triggers),bucket_triggered=active,fund_triggered=any(fund_triggers)))
     sell_total=sum(-r['desired_cents'] for r in rows if r['desired_cents']<0)
     buyers=[r for r in rows if r['desired_cents']>0]
     requested_buys=sum(r['desired_cents'] for r in buyers)
@@ -134,7 +141,7 @@ def plan_rebalance(holdings, targets, fraction=.25, threshold=.05, theme_limits=
         if row['desired_cents']>round_amount:row['reasons'].append('卖出预算不足，本轮买入按可筹资金缩减；不假设新增资金')
         row['reasons'].append(restriction)
         if execute!=round_amount:row['reasons'].append('含未确认/受限赎回或未指定基金：理论计划不是可直接执行金额')
-        public.append(dict(id=row['id'],name=row['name'],account=row.get('account',''),bucket=row['bucket'],themes=row['themes'],current_amount=_money(amount),current_weight=float(D(amount)/total),target_amount=_money(row['target_cents']),target_weight=float(D(row['target_cents'])/total),final_adjustment_amount=_money(row['final_delta_cents']),desired_round_amount=_money(row['desired_cents']),round_amount=_money(round_amount),executable_amount=_money(execute),action=action,holding_status=row['holding_status'],restriction=restriction,restriction_reason=row.get('restriction_reason',''),holding_period=row.get('holding_period',''),earliest_redemption=row.get('earliest_redemption'),virtual=row['virtual'],reasons=row['reasons'],estimated_amount=_money(amount+round_amount),estimated_weight=float(D(amount+round_amount)/total),executable_estimated_amount=_money(amount+execute),executable_estimated_weight=float(D(amount+execute)/total)))
+        public.append(dict(id=row['id'],name=row['name'],account=row.get('account',''),bucket=row['bucket'],themes=row['themes'],current_amount=_money(amount),current_weight=float(D(amount)/total),target_amount=_money(row['target_cents']),target_weight=float(D(row['target_cents'])/total),final_adjustment_amount=_money(row['final_delta_cents']),desired_round_amount=_money(row['desired_cents']),round_amount=_money(round_amount),executable_amount=_money(execute),action=action,holding_status=row['holding_status'],restriction=restriction,restriction_reason=row.get('restriction_reason',''),holding_period=row.get('holding_period',''),earliest_redemption=row.get('earliest_redemption'),virtual=row['virtual'],triggered=row['active'],explicit_target=row['explicit_target'],reasons=row['reasons'],estimated_amount=_money(amount+round_amount),estimated_weight=float(D(amount+round_amount)/total),executable_estimated_amount=_money(amount+execute),executable_estimated_weight=float(D(amount+execute)/total)))
         simulation.append(dict(id=row['id'],name=row['name'],bucket=row['bucket'],amount=_money(amount+round_amount),weight=float(D(amount+round_amount)/total)))
         executable_simulation.append(dict(id=row['id'],name=row['name'],bucket=row['bucket'],amount=_money(amount+execute),weight=float(D(amount+execute)/total)))
     if reserve:simulation.append(dict(id='reserve',name='待分配现金',bucket='待分配现金',amount=_money(reserve),weight=float(D(reserve)/total)))

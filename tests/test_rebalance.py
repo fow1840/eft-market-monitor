@@ -175,3 +175,39 @@ def test_financial_invariants_across_rounded_portfolios(seed):
     for h in result['holdings']:
         assert abs(h['executable_amount'])<=abs(h['round_amount'])+1e-9
         assert abs(h['round_amount'])<=abs(h['final_adjustment_amount'])*.25+1e-9
+
+
+def test_explicit_fund_targets_rebalance_inside_on_target_bucket():
+    holdings=[row('a','甲',700,'核心宽基',fund_target=.5),row('b','乙',300,'核心宽基',fund_target=.5)]
+    r=plan_rebalance(holdings,{'核心宽基':1})
+    assert r['buckets'][0]['bucket_triggered'] is False
+    assert r['buckets'][0]['fund_triggered'] is True
+    assert [h['final_adjustment_amount'] for h in r['holdings']]==[-200,200]
+    assert [h['round_amount'] for h in r['holdings']]==[-50,50]
+    assert [h['executable_amount'] for h in r['holdings']]==[-50,50]
+    assert [h['estimated_amount'] for h in r['holdings']]==[650,350]
+    assert integer_sum(r['simulation'])==integer_sum(r['executable_simulation'])==100000
+    assert all(any('基金层再平衡' in reason for reason in h['reasons']) for h in r['holdings'])
+
+
+@pytest.mark.parametrize('first_amount,triggered',[(550,False),(551,True),(450,False),(449,True)])
+def test_explicit_fund_target_exact_five_point_boundary(first_amount,triggered):
+    holdings=[row('a','甲',first_amount,'核心宽基',fund_target=.5),row('b','乙',1000-first_amount,'核心宽基',fund_target=.5)]
+    r=plan_rebalance(holdings,{'核心宽基':1})
+    assert all(h['triggered'] is triggered for h in r['holdings'])
+    assert r['buckets'][0]['triggered'] is triggered
+    if not triggered:assert all(h['round_amount']==0 for h in r['holdings'])
+
+
+def test_no_fund_target_does_not_invent_fund_level_rebalance():
+    holdings=[row('a','甲',900,'核心宽基'),row('b','乙',100,'核心宽基')]
+    r=plan_rebalance(holdings,{'核心宽基':1})
+    assert all(h['round_amount']==0 for h in r['holdings'])
+    assert r['buckets'][0]['triggered'] is False
+
+
+@pytest.mark.parametrize('huge',['1e100','1e9999999',Decimal('9'*100)])
+def test_huge_finite_money_reports_friendly_value_error(huge):
+    holdings=standard();holdings[0]['amount']=huge
+    with pytest.raises(ValueError,match='金额超出支持的分币计算精度'):
+        plan_rebalance(holdings,{'卫星':.2,'核心宽基':.8})
