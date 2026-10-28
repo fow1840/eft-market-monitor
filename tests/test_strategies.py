@@ -169,3 +169,34 @@ def test_b_pure_trend_and_c_confirmation_volume_missing():
     assert evaluate('B',changed(volume_ratio=None),.3)['action']=='正常买入'
     assert evaluate('C',changed(volume_ratio=None),.3)['action']=='小额增加'
     assert evaluate('D',changed(volume_ratio=None),.02)['action']=='持有不动'
+
+
+def test_suspension_cannot_execute_at_untradable_open():
+    d=data();base=run_strategy_backtest(d,'B',fee_rate=0)
+    first=base.daily[base.daily.trades>0].index[0]
+    d.loc[first,'volume']=0
+    result=run_strategy_backtest(d,'B',fee_rate=0)
+    assert result.daily.trades.iloc[first]==0
+    assert result.daily.units.iloc[first]==0
+
+
+@pytest.mark.parametrize('section,key,value',[('evaluation','annual_consistency',2),('execution','minimum_volume',-1)])
+def test_report_and_execution_config_validation(section,key,value):
+    config=load_config();config[section][key]=value
+    with pytest.raises(ValueError):evaluate('B',row(),.3,config)
+
+
+def test_aware_date_cannot_extend_publication_cutoff():
+    d=changed(date=pd.Timestamp('2024-01-31T00:00:00Z'),valuation_available_at='2024-01-31T16:00:00+08:00')
+    assert evaluate('A',d,.3)['available'] is False
+    assert evaluate('C',d,.3)['available'] is False
+
+
+def test_d_midterm_risk_does_not_wait_for_longterm_warmup():
+    d=evaluate('D',changed(close=105,ma_long=float('nan'),ma_long_prev=float('nan')),.1)
+    assert d['action']=='降低风险仓' and d['target_weight']==.02
+
+
+def test_stability_ratio_parameters_validated():
+    c=load_config();c['evaluation']['max_underwater_ratio']=0
+    with pytest.raises(ValueError):evaluate('B',row(),.3,c)

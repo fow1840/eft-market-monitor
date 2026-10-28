@@ -20,7 +20,7 @@ DEFAULT_PATH = Path(__file__).resolve().parents[1]/'config'/'strategies.json'
 
 
 def validate_config(config):
-    for section in ('windows','thresholds','A','B','C','D'):
+    for section in ('windows','thresholds','A','B','C','D','evaluation','execution'):
         if section not in config or not isinstance(config[section],dict):raise ValueError('missing config section '+section)
     for field in ('short','medium','long','volume','pullback'):
         value=config['windows'].get(field)
@@ -41,6 +41,17 @@ def validate_config(config):
             value=values.get(key)
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):raise ValueError('invalid weight')
         if not 0<values['min_weight']<=values['risk_weight']<=values['target_weight']<=values['max_weight']<1:raise ValueError('weights must be nonbinary ordered fractions')
+    for field in ('drawdown_improvement','annual_consistency','annual_return_slack'):
+        value=config['evaluation'].get(field)
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=1:
+            raise ValueError('invalid evaluation threshold')
+    for field in ('max_underwater_ratio','max_annual_dispersion_ratio'):
+        value=config['evaluation'].get(field)
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value<=0:
+            raise ValueError('invalid stability ratio')
+    value=config['execution'].get('minimum_volume')
+    if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value<0:
+        raise ValueError('invalid minimum volume')
     return config
 
 
@@ -82,7 +93,9 @@ def _published(row, prefix):
     if value is None or pd.isna(value):return False
     try:
         published=pd.Timestamp(value)
-        signal=pd.Timestamp(row['date']).normalize()+pd.Timedelta(hours=15,minutes=30)
+        signal=pd.Timestamp(row['date'])
+        signal=signal.tz_localize('Asia/Shanghai') if signal.tzinfo is None else signal.tz_convert('Asia/Shanghai')
+        signal=signal.normalize()+pd.Timedelta(hours=15,minutes=30)
         if published.tzinfo is None:published=published.tz_localize('Asia/Shanghai')
         if signal.tzinfo is None:signal=signal.tz_localize('Asia/Shanghai')
         return published<=signal
@@ -103,6 +116,16 @@ def evaluate(strategy, row, current_weight, config=None):
         return result('偏弱','降低风险仓',p['target_weight'])
     # Any overweight blocks purchases even inside the rebalance band.
     overweight=current>p['target_weight']+t['trade_tolerance']
+    # Available price risk limits cannot be overridden by missing auxiliary history.
+    long_break=_finite(row.get('close')) and _finite(row.get('ma_long')) and float(row['close'])<float(row['ma_long'])
+    mid_break=_finite(row.get('close')) and _finite(row.get('ma_medium')) and float(row['close'])<float(row['ma_medium'])
+    if (strategy in ('B','C') and long_break) or (strategy=='D' and (long_break or mid_break)):
+        desired=min(current,p['risk_weight'])
+        reasons.append('已可验证的长期/中期风险限制优先于缺失的买入确认指标')
+        complete=True
+        if strategy=='C':
+            complete=_published(row,'valuation') and _published(row,'breadth') and all(_finite(row.get(k)) and 0<=float(row[k])<=1 for k in ('pe_percentile','pb_percentile','breadth_ratio'))
+        return result('弱' if long_break else '偏弱','降低风险仓' if desired<current else '暂停新增',desired,complete)
     features=('close','ma_short','ma_medium','ma_long','ma_long_prev')
     if not all(_finite(row.get(key)) for key in features):
         reasons.append('均线/量能预热不足或数据缺失，暂停新增，保留现有仓位')
@@ -112,10 +135,6 @@ def evaluate(strategy, row, current_weight, config=None):
     medium_up=close>short>medium
     long_broken=close<long
     volume_ok=_finite(row.get('volume_ratio')) and float(row['volume_ratio'])>=t['volume_confirm']
-    if strategy=='C' and long_broken:
-        reasons.append('长期趋势破坏时风险限制优先，缺失辅助指标不能阻止降低风险仓')
-        desired=min(current,p['risk_weight'])
-        return result('弱','降低风险仓' if desired<current else '暂停新增',desired)
     value=None
     if strategy in ('A','C'):
         if not _published(row,'valuation') or not all(_finite(row.get(k)) and 0<=float(row[k])<=1 for k in ('pe_percentile','pb_percentile')):
@@ -193,10 +212,14 @@ def run_strategy_backtest(data,strategy,config=None,*,initial_capital=100000,fee
     frame=make_features(data,config)
     if start is not None:frame=frame[frame.date>=pd.Timestamp(start)].reset_index(drop=True)
     if len(frame)<2:raise ValueError('at least two evaluation dates required')
-    cash=float(initial_capital);units=0.;pending=None;daily=[];decisions=[]
+    cash=float(initial_capital);units=0.;pending=None;pending_day=None;daily=[];decisions=[]
     for row in frame.to_dict('records'):
         equity_open=cash+units*row['open'];fee=0.;trades=0
-        if pending is not None:
+        signal_day=pending_day
+        execution_status='no_order' if pending is None else 'within_tolerance'
+        if pending is not None and row['volume']<=config['execution']['minimum_volume']:
+            execution_status='cancelled_untradable_open'
+        if pending is not None and row['volume']>config['execution']['minimum_volume']:
             weight=units*row['open']/equity_open
             if abs(weight-pending)>config['thresholds']['trade_tolerance']:
                 target=pending*equity_open;difference=target-units*row['open']
@@ -204,12 +227,17 @@ def run_strategy_backtest(data,strategy,config=None,*,initial_capital=100000,fee
                     sold=min(units,-difference/row['open']);proceeds=sold*row['open'];fee=proceeds*fee_rate;units-=sold;cash+=proceeds-fee;trades=1
                 elif difference>0:
                     budget=min(cash,difference*(1+fee_rate));notional=budget/(1+fee_rate);fee=budget-notional;cash-=budget;units+=notional/row['open'];trades=1
+        if trades:execution_status='executed'
         equity=cash+units*row['close'];current=units*row['close']/equity
         decision=evaluate(strategy,row,current,config)
+        if row['volume']<=config['execution']['minimum_volume'] and decision['action'] in ('正常买入','小额增加'):
+            decision.update(action='暂停新增',target_weight=current,available=False)
+            decision['reasons'].append('零成交或低于配置阈值，暂停新增且取消不可成交订单')
         # A hold/no-add action must not rebalance a drifting weight at tomorrow's open.
         pending=decision['target_weight'] if decision['action'] in ('正常买入','小额增加','降低风险仓') else None
+        pending_day=row['date'] if pending is not None else None
         decisions.append({'date':row['date'],'current_weight':current,**decision})
-        daily.append({'date':row['date'],'equity':equity,'cash':cash,'units':units,'fee':fee,'trades':trades,'weight':current})
+        daily.append({'date':row['date'],'equity':equity,'cash':cash,'units':units,'fee':fee,'trades':trades,'weight':current,'execution_status':execution_status,'signal_date':signal_day})
     daily=pd.DataFrame(daily);metrics=performance_metrics(daily,initial_capital)
     returns=daily.equity.div(daily.equity.shift(1).fillna(initial_capital)).sub(1)
     losing=returns<0;groups=(~losing).cumsum()

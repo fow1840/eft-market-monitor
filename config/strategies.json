@@ -1,8 +1,55 @@
 {
-  "windows": {"short":20,"medium":60,"long":200,"volume":20,"pullback":10},
-  "thresholds": {"low_valuation":0.30,"high_valuation":0.70,"broad_strong":0.60,"broad_weak":0.40,"volume_confirm":1.10,"shares_inflow":0.01,"allocation_band":0.05,"buy_step":0.05,"small_buy_step":0.02,"trade_tolerance":0.001},
-  "A": {"target_weight":0.60,"min_weight":0.40,"max_weight":0.70,"risk_weight":0.40},
-  "B": {"target_weight":0.60,"min_weight":0.20,"max_weight":0.80,"risk_weight":0.20},
-  "C": {"target_weight":0.60,"min_weight":0.20,"max_weight":0.80,"risk_weight":0.20},
-  "D": {"target_weight":0.10,"min_weight":0.02,"max_weight":0.10,"risk_weight":0.02}
+  "windows": {
+    "short": 20,
+    "medium": 60,
+    "long": 200,
+    "volume": 20,
+    "pullback": 10
+  },
+  "thresholds": {
+    "low_valuation": 0.3,
+    "high_valuation": 0.7,
+    "broad_strong": 0.6,
+    "broad_weak": 0.4,
+    "volume_confirm": 1.1,
+    "shares_inflow": 0.01,
+    "allocation_band": 0.05,
+    "buy_step": 0.05,
+    "small_buy_step": 0.02,
+    "trade_tolerance": 0.001
+  },
+  "A": {
+    "target_weight": 0.6,
+    "min_weight": 0.4,
+    "max_weight": 0.7,
+    "risk_weight": 0.4
+  },
+  "B": {
+    "target_weight": 0.6,
+    "min_weight": 0.2,
+    "max_weight": 0.8,
+    "risk_weight": 0.2
+  },
+  "C": {
+    "target_weight": 0.6,
+    "min_weight": 0.2,
+    "max_weight": 0.8,
+    "risk_weight": 0.2
+  },
+  "D": {
+    "target_weight": 0.1,
+    "min_weight": 0.02,
+    "max_weight": 0.1,
+    "risk_weight": 0.02
+  },
+  "evaluation": {
+    "drawdown_improvement": 0.05,
+    "annual_consistency": 0.6,
+    "annual_return_slack": 0.02,
+    "max_underwater_ratio": 1.0,
+    "max_annual_dispersion_ratio": 1.0
+  },
+  "execution": {
+    "minimum_volume": 0
+  }
 }
