@@ -1,6 +1,7 @@
 """Validated daily ETF quotes with bounded subprocess fetches and SQLite cache."""
 from __future__ import annotations
 import json
+from contextlib import contextmanager
 import multiprocessing as mp
 from pathlib import Path
 import sqlite3
@@ -64,6 +65,8 @@ def _worker(queue, symbol, provider):
 def fetch_quotes(symbol: str, provider='eastmoney', timeout=25) -> pd.DataFrame:
     if symbol not in ETF_UNIVERSE:
         raise ValueError('不支持的 ETF 代码')
+    if provider not in ('eastmoney', 'sina') or not 0 < timeout <= 120:
+        raise ValueError('行情 provider 或超时设置不合法')
     ctx = mp.get_context('spawn')
     queue = ctx.Queue()
     process = ctx.Process(target=_worker, args=(queue, symbol, provider))
@@ -85,18 +88,28 @@ def fetch_quotes(symbol: str, provider='eastmoney', timeout=25) -> pd.DataFrame:
         queue.close()
 
 
+@contextmanager
 def connect_quotes(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=10)
-    connection.execute('''CREATE TABLE IF NOT EXISTS quotes (
+    try:
+        connection.execute('''CREATE TABLE IF NOT EXISTS quotes (
       symbol TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
       volume REAL, amount REAL, source TEXT, fetched_at TEXT,
       PRIMARY KEY(symbol,date))''')
-    return connection
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def save_quotes(path: Path, symbol: str, frame: pd.DataFrame, source: str):
+    if symbol not in ETF_UNIVERSE:
+        raise ValueError('不支持的 ETF 代码')
     data = validate_quotes(frame)
+    now = datetime.now(ZoneInfo('Asia/Shanghai'))
+    if (now.hour, now.minute) < (15, 30):
+        data = data[data['date'].dt.date < now.date()]
     fetched = datetime.now(timezone.utc).isoformat()
     rows = [(symbol, row.date.strftime('%Y-%m-%d'), row.open,row.high,row.low,row.close,row.volume,row.amount,source,fetched)
             for row in data.itertuples(index=False)]
@@ -108,7 +121,10 @@ def read_quotes(path: Path, symbol: str) -> pd.DataFrame:
     with connect_quotes(path) as db:
         data = pd.read_sql_query('SELECT * FROM quotes WHERE symbol=? ORDER BY date', db, params=(symbol,))
     if not data.empty:
+        # Disk corruption/manual edits must not bypass ingestion validation.
+        validated = validate_quotes(data)
         data['date'] = pd.to_datetime(data['date'])
+        data = data[data['date'].isin(validated['date'])].drop_duplicates('date').reset_index(drop=True)
         now = datetime.now(ZoneInfo('Asia/Shanghai'))
         # Intraday API bars are not completed daily data.
         if (now.hour, now.minute) < (15, 30):
@@ -117,10 +133,26 @@ def read_quotes(path: Path, symbol: str) -> pd.DataFrame:
 
 
 def update_quotes(path: Path, symbol: str, *, force=False, fetcher=fetch_quotes, retries=2, cache_hours=6) -> dict:
-    cached = read_quotes(path, symbol)
+    if not isinstance(retries, int) or not 1 <= retries <= 3:
+        raise ValueError('重试次数必须为1至3')
+    try:
+        cached = read_quotes(path, symbol)
+    except (ValueError, sqlite3.Error, pd.errors.DatabaseError) as exc:
+        # Preserve damaged files. A database fault needs explicit repair, not reset.
+        return {'data':pd.DataFrame(columns=COLUMNS), 'cached':False,
+                'error':'本地行情缓存不可读: ' + type(exc).__name__, 'source':None}
     if not cached.empty and not force:
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(cached['fetched_at'].iloc[-1])
-        if age.total_seconds() < cache_hours * 3600:
+        try:
+            fetched_at = datetime.fromisoformat(cached['fetched_at'].iloc[-1])
+            age = datetime.now(timezone.utc) - fetched_at
+            fresh_cache = 0 <= age.total_seconds() < cache_hours * 3600
+            local_now = datetime.now(ZoneInfo('Asia/Shanghai'))
+            close_time = local_now.replace(hour=15, minute=30, second=0, microsecond=0)
+            if local_now.weekday() < 5 and local_now >= close_time and fetched_at < close_time:
+                fresh_cache = False
+        except (TypeError, ValueError):
+            fresh_cache = False
+        if fresh_cache:
             return {'data':cached, 'cached':True, 'error':None, 'source':cached['source'].iloc[-1]}
     errors = []
     for provider in ('eastmoney','sina'):
@@ -132,7 +164,7 @@ def update_quotes(path: Path, symbol: str, *, force=False, fetcher=fetch_quotes,
                 save_quotes(path,symbol,data,provider)
                 return {'data':read_quotes(path,symbol), 'cached':False, 'error':None, 'source':provider}
             except (Exception,) as exc:
-                errors.append(f'{provider}/{attempt+1}: {type(exc).__name__}: {exc}')
+                errors.append(f'{provider}/{attempt+1}: {type(exc).__name__}')
                 if attempt + 1 < retries:
                     time.sleep(.25 * (attempt + 1))
     return {'data':cached, 'cached':True, 'error':'; '.join(errors), 'source':None if cached.empty else cached['source'].iloc[-1]}
