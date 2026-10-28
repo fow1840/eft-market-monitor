@@ -328,7 +328,7 @@ def fetch_breadth_tencent(timeout=8, max_pages=40):
     """Tencent universe plus timestamped quotes. Intraday snapshots are NOT closing signals."""
     from concurrent.futures import ThreadPoolExecutor
     rank_url = 'https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList'
-    base = {'_appver':'11.17.0', 'board_code':'aStock', 'sort_type':'price', 'direct':'down', 'count':200}
+    base = {'_appver':'11.17.0', 'board_code':'aStock', 'sort_type':'turnover', 'direct':'down', 'count':200}
     def rank(offset):
         response = requests.get(rank_url, params={**base,'offset':offset}, timeout=timeout)
         response.raise_for_status()
@@ -339,10 +339,10 @@ def fetch_breadth_tencent(timeout=8, max_pages=40):
     total = int(first['total'])
     if total <= 0 or total > max_pages*200: raise ValueError('universe bound exceeded')
     codes = {row['code']:row['name'] for row in first['rank_list']}
-    offsets = list(range(200,total,200))
-    # A moving price rank can shift page boundaries. A bounded second pass must
+    offsets = list(range(0,total,200))
+    # Moving ranks can shift page boundaries. Bounded repeated passes must
     # fill the exact declared universe; no acceptance of a partial list.
-    for attempt in range(2):
+    for attempt in range(3):
         with ThreadPoolExecutor(max_workers=3) as pool:
             pages = list(pool.map(rank,offsets))
         for page in pages:

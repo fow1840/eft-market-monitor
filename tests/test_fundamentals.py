@@ -152,3 +152,12 @@ def test_tencent_full_snapshot_stays_intraday(monkeypatch):
     assert result['date'] == '2025-10-27'
     assert result['limit_up_count'] == 1
     assert result['validation_sample'][0]['amount'] == 110000
+
+
+def test_tencent_incomplete_universe_never_becomes_full_market(monkeypatch):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return {'code':0,'data':{'total':2,'rank_list':[{'code':'sh600001','name':'示例'}]}}
+    monkeypatch.setattr('src.fundamentals.requests.get',lambda *a,**k:Response())
+    with pytest.raises(ValueError,match='universe incomplete'):
+        fetch_breadth_tencent()
