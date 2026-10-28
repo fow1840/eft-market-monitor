@@ -203,7 +203,10 @@ def analyze_breadth(frame, as_of, source='unknown', expected_count=None):
         column = f'limit_{side}'
         if column in quoted:
             limits = pd.to_numeric(quoted[column], errors='coerce')
-            if limits.notna().all() and limits.gt(0).all():
+            known = limits.notna() & limits.gt(0)
+            result[f'limit_{side}_coverage'] = float(known.mean())
+            result[f'limit_{side}_observed_count'] = int((((quoted.close >= limits-.005) if side == 'up' else (quoted.close <= limits+.005)) & known).sum())
+            if known.all():
                 result[f'limit_{side}_count'] = int(((quoted.close >= limits-.005) if side == 'up' else (quoted.close <= limits+.005)).sum())
     inferred_up = inferred_down = 0
     inferred_valid = 0
@@ -222,6 +225,8 @@ def analyze_breadth(frame, as_of, source='unknown', expected_count=None):
         result['reasons'].append('未提供逐股官方涨跌停价，涨跌停数不可验证；板块推算单独列示')
     if not complete:
         result['reasons'].append('全A股票集合完整性未验证，不输出全市场状态')
+    elif n / len(data) < .9:
+        result['reasons'].append('有效报价覆盖不足90%，不输出市场状态')
     else:
         result['state'] = '强' if ratio >= .7 else '改善' if ratio >= .55 else '中性' if ratio >= .45 else '偏弱' if ratio >= .3 else '弱'
         result['reasons'].append(f'有效报价上涨比例{ratio:.1%}；停牌/无效报价{len(data)-n}只排除')
@@ -230,7 +235,7 @@ def analyze_breadth(frame, as_of, source='unknown', expected_count=None):
     return result
 
 
-def fetch_breadth(timeout=10, max_pages=80):
+def _fetch_breadth_eastmoney(timeout=10, max_pages=80):
     """Bounded Eastmoney full-universe snapshot; rejects mixed quote dates."""
     rows = []
     total = None
@@ -296,3 +301,90 @@ def fetch_shares_history(symbol, as_of, sessions=21, timeout=10, trading_calenda
     frame.attrs['trading_calendar'] = calendar
     frame.attrs['failed_dates'] = failures
     return frame
+
+
+def parse_tencent_quotes(text):
+    """Parse dated Tencent quote records; exact amount (yuan), published price limits."""
+    import re
+    rows = []
+    for market_code, content in re.findall(r'v_([a-z]{2}\d{6})="([^"]*)"', text):
+        fields = content.split('~')
+        if len(fields) < 49 or len(fields[30]) < 14:
+            continue
+        try:
+            timestamp = pd.to_datetime(fields[30], format='%Y%m%d%H%M%S')
+            row = dict(code=market_code[2:], name=fields[1], close=float(fields[3]),
+                       previous_close=float(fields[4]), date=timestamp.date().isoformat(),
+                       quote_timestamp=timestamp.isoformat(),
+                       amount=float(fields[35].split('/')[2]),
+                       limit_up=float(fields[47]), limit_down=float(fields[48]))
+        except (ValueError, IndexError):
+            continue
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def fetch_breadth_tencent(timeout=8, max_pages=40):
+    """Tencent universe plus timestamped quotes. Intraday snapshots are NOT closing signals."""
+    from concurrent.futures import ThreadPoolExecutor
+    rank_url = 'https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList'
+    base = {'_appver':'11.17.0', 'board_code':'aStock', 'sort_type':'price', 'direct':'down', 'count':200}
+    def rank(offset):
+        response = requests.get(rank_url, params={**base,'offset':offset}, timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get('code') != 0 or 'data' not in payload: raise ValueError('Tencent universe unavailable')
+        return payload['data']
+    first = rank(0)
+    total = int(first['total'])
+    if total <= 0 or total > max_pages*200: raise ValueError('universe bound exceeded')
+    codes = {row['code']:row['name'] for row in first['rank_list']}
+    offsets = list(range(200,total,200))
+    # A moving price rank can shift page boundaries. A bounded second pass must
+    # fill the exact declared universe; no acceptance of a partial list.
+    for attempt in range(2):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            pages = list(pool.map(rank,offsets))
+        for page in pages:
+            if int(page['total']) != total: raise ValueError('universe changed during pagination')
+            codes.update({row['code']:row['name'] for row in page['rank_list']})
+        if len(codes) == total: break
+    if len(codes) != total: raise ValueError('Tencent universe incomplete after bounded retries')
+    code_list = sorted(codes)
+    batches = [code_list[i:i+100] for i in range(0,len(code_list),100)]
+    def quote(batch):
+        response = requests.get('https://qt.gtimg.cn/q='+','.join(batch),timeout=timeout)
+        response.raise_for_status()
+        response.encoding = 'gbk'
+        return parse_tencent_quotes(response.text)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        frames = list(pool.map(quote,batches))
+    quoted = pd.concat(frames,ignore_index=True)
+    if quoted.empty: raise ValueError('Tencent dated quotes unavailable')
+    if quoted.code.duplicated().any(): raise ValueError('duplicate Tencent quote codes')
+    latest = max(quoted.date)
+    if pd.Timestamp(latest).date() > date.today(): raise ValueError('future Tencent quote date')
+    stamps = quoted.quote_timestamp
+    # Dates can differ for suspensions; exclude stale quotes instead of assigning
+    # a guessed date or incorrectly counting a suspended stock as unchanged.
+    stale = quoted.date != latest
+    quoted.loc[stale,['close','amount']] = float('nan')
+    universe = pd.DataFrame([{'code':key[2:],'name':value} for key,value in codes.items()])
+    if universe.code.duplicated().any(): raise ValueError('ambiguous Tencent security identity')
+    frame = universe.merge(quoted.drop(columns='name'),on='code',how='left',validate='one_to_one')
+    result = analyze_breadth(frame,latest,'Tencent dated full-A quotes (intraday)',total)
+    result.update(closed=False, is_intraday=True, quote_timestamp_min=stamps.min(),
+                  quote_timestamp_max=stamps.max(), stale_quote_count=int(stale.sum()))
+    result['reasons'].append('盘中分批快照，非同时点；不得直接用于收盘市场状态或回测')
+    result['validation_sample'] = quoted.loc[~stale].sample(min(5,int((~stale).sum())),random_state=20261028)[['code','close','previous_close','amount','quote_timestamp']].to_dict('records')
+    result['intraday_state'] = result['state']
+    result['state'] = None
+    return result
+
+
+def fetch_breadth(timeout=8, max_pages=80):
+    """Bounded primary-source attempt then a dated Tencent fallback."""
+    try:
+        return _fetch_breadth_eastmoney(timeout=min(timeout,4),max_pages=max_pages)
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return fetch_breadth_tencent(timeout=timeout,max_pages=min(max_pages,40))

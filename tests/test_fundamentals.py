@@ -120,3 +120,35 @@ def test_shares_calendar_exact_continuity_and_missing_day():
     assert result['change5'] is None
     assert result['state'] is None
     with pytest.raises(ValueError): analyze_shares(frame,trading_calendar=calendar[1:])
+
+from src.fundamentals import parse_tencent_quotes
+
+
+def test_tencent_dated_quotes_exact_amount_and_limits():
+    fields=['']*49
+    for k,v in {1:'示例',3:'11',4:'10',30:'20251027150000',35:'11/100/110000',47:'11',48:'9'}.items(): fields[k]=v
+    frame = parse_tencent_quotes('v_sh600001="'+'~'.join(fields)+'";')
+    assert frame.iloc[0].to_dict() == dict(code='600001',name='示例',close=11,previous_close=10,date='2025-10-27',quote_timestamp='2025-10-27T15:00:00',amount=110000,limit_up=11,limit_down=9)
+    assert parse_tencent_quotes('v_sh600001="no data";').empty
+
+from src.fundamentals import fetch_breadth_tencent
+
+
+def test_tencent_full_snapshot_stays_intraday(monkeypatch):
+    fields=['']*49
+    for k,v in {1:'示例',3:'11',4:'10',30:'20251027150000',35:'11/100/110000',47:'11',48:'9'}.items(): fields[k]=v
+    quote='v_sh600001="'+'~'.join(fields)+'";'
+    class Response:
+        text=quote
+        encoding='gbk'
+        def raise_for_status(self): pass
+        def json(self): return {'code':0,'data':{'total':1,'rank_list':[{'code':'sh600001','name':'示例'}]}}
+    monkeypatch.setattr('src.fundamentals.requests.get',lambda *a,**k:Response())
+    result=fetch_breadth_tencent()
+    assert result['coverage'] == 1
+    assert result['state'] is None
+    assert result['intraday_state'] == '强'
+    assert result['closed'] is False
+    assert result['date'] == '2025-10-27'
+    assert result['limit_up_count'] == 1
+    assert result['validation_sample'][0]['amount'] == 110000

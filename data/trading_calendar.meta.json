@@ -1,0 +1,7 @@
+{
+  "source": "https://finance.sina.com.cn/realstock/company/klc_td_sh.txt",
+  "decoder": "AKShare calendar_trade_date_hist hk_js_decode",
+  "retrieved_on": "2026-10-28",
+  "coverage": "2018-01-02 through 2026-12-31",
+  "usage": "Historical-session validation; future published dates may change and must be refreshed. Not a guarantee against later exchange closure notices."
+}
