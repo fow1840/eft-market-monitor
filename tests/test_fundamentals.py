@@ -48,3 +48,61 @@ def test_valuation_no_history_no_signal_and_api_failure(monkeypatch):
     monkeypatch.setattr('src.fundamentals.requests.get', fail)
     with pytest.raises(TimeoutError): fetch_valuation('沪深300')
     with pytest.raises(ValueError): fetch_valuation('unknown')
+
+from src.fundamentals import analyze_breadth, fetch_breadth
+
+
+def breadth_sample():
+    return pd.DataFrame({'code':['600001','300001','688001','830001','600002'], 'name':['ST测试','创业','科创','北交','普通'],
+        'previous_close':[10]*5, 'close':[10.5,12,8,13,10], 'amount':[100]*5,
+        'listed_sessions':[100]*5, 'ma20':[9]*5, 'ma60':[9]*5})
+
+
+def test_breadth_hand_counts_board_limits_and_coverage():
+    result = analyze_breadth(breadth_sample(),'2025-01-02','sample',5)
+    assert result['advances'] == 3
+    assert result['declines'] == 1
+    assert result['unchanged'] == 1
+    assert result['advance_ratio'] == .6
+    assert result['turnover'] == 500
+    assert result['above_ma20_ratio'] == .8
+    assert result['inferred_limit_up_count'] == 3
+    assert result['inferred_limit_down_count'] == 1
+    assert result['limit_up_count'] is None
+    assert result['state'] == '改善'
+
+
+def test_breadth_incomplete_missing_suspension_and_duplicates():
+    data = breadth_sample()
+    data.loc[0,'close'] = None
+    result = analyze_breadth(data,'2025-01-02',expected_count=6)
+    assert result['state'] is None
+    assert result['above_ma20_ratio'] is None
+    assert result['excluded_count'] == 1
+    data.loc[0,'code'] = data.loc[1,'code']
+    with pytest.raises(ValueError): analyze_breadth(data,'2025-01-02')
+    assert not analyze_breadth(pd.DataFrame(),'2025-01-02')['available']
+
+
+def test_breadth_api_failure(monkeypatch):
+    def fail(*a, **k): raise TimeoutError('offline')
+    monkeypatch.setattr('src.fundamentals.requests.get', fail)
+    with pytest.raises(TimeoutError): fetch_breadth()
+
+
+def test_new_listing_and_published_limits():
+    data = breadth_sample()
+    data['listed_sessions'] = 1
+    data['limit_up'] = [10.5,12,12,13,11]
+    data['limit_down'] = [9.5,8,8,7,9]
+    result = analyze_breadth(data,'2025-01-02',expected_count=5)
+    assert result['inferred_limit_up_count'] is None
+    assert result['limit_up_count'] == 3
+    assert result['limit_down_count'] == 1
+
+
+def test_nonfinite_and_future_data_rejected():
+    data = pd.DataFrame({'date':['2025-01-01'], 'shares':[float('inf')]})
+    with pytest.raises(ValueError): analyze_shares(data)
+    data = breadth_sample()
+    with pytest.raises(ValueError): analyze_breadth(data,'2099-01-01')
