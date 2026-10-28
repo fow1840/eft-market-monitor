@@ -76,3 +76,7 @@ streamlit run app.py
 ```
 
 Windows激活使用 `.venv\Scripts\Activate.ps1`。需要精确复现本次依赖时安装 `requirements.lock.txt`。没有必需的AI API Key，不接入真实交易。
+
+## S01 后续交付：四策略研究模块
+
+四套参数化规则、T+1状态化执行、逐次原因、费用、连续亏损/水下期、年度与样本外比较、策略页面及独立图表已实现。完整226项测试通过，其中60项引擎测试含26人工场景。详见STRATEGY_REPORT.md；A/C历史绩效仍缺可审计因子，不宣称已验证全部四套策略收益。

@@ -71,3 +71,17 @@ python -m jobs.backtest_report --calendar data/trading_calendar.csv --calendar-s
 
 pytest使用人工可验证、边界、失败和Mock数据；真实数据探测命令与单元测试分开。Python 3.11环境验收记录见最终报告。
 项目只用于投资研究和风险管理，不自动交易，不保证收益或回撤。
+
+## 四策略研究模块
+
+```bash
+python -m jobs.strategy_report
+```
+
+生成 `STRATEGY_REPORT.md` 以及 `reports/strategies/` 中的比较表、逐次决策、分段稳定性和净值/回撤HTML图。首页侧栏“策略研究”可查看规则试算和报告。
+
+参数见 `config/strategies.json`：均线窗口、估值/宽度/量能阈值、仓位带、增仓步长和四策略风险仓上下限。仓位和百分位使用0—1小数；页面仓位输入使用百分比。修改参数后重新生成报告，不自动交易。
+
+A长期价值配置、B纯趋势、C价值＋趋势、D卫星波段均输出原因。A/C历史回测要求逐日可审计的PE/PB分位及发布时间，C还需要市场宽度及发布时间；不将当前估值回填过去。可以通过 `jobs.strategy_report.build_comparison` 向行情DataFrame提供 `pe_percentile`、`pb_percentile`、`valuation_available_at`、`breadth_ratio`、`breadth_available_at`，可选 `shares_change5`/`shares_available_at`。发布时间按上海时区判断，不晚于信号日收盘决策截止时间。
+
+当前数据库缺少完整历史时点因子，因此A/C会显示“历史数据不足”，而不是生成虚构收益。B与简单宽基/现金比较，D与同卫星额度比较；不能以较低风险额度的回撤直接证明择时有效。
